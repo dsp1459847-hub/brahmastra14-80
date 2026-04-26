@@ -4,21 +4,22 @@ import numpy as np
 from datetime import timedelta
 from collections import Counter
 
-st.set_page_config(page_title="MAYA AI - Sniper Target Engine", layout="wide")
+st.set_page_config(page_title="MAYA AI - Final Sniper Engine", layout="wide")
 
-st.title("MAYA AI 🎯: Sniper Target Engine (Zero Confusion)")
-st.markdown("Is engine mein koi faltu Part 2 ya Part 3 nahi hai. AI history check karke sirf wahi **Top Parts** nikalta hai jinka aaj aane ka 100% chance hai, aur sirf wahi numbers screen par dikhata hai!")
+st.title("MAYA AI 🏆: Final Sniper & Date-Corrected Engine")
+st.markdown("Yeh final code hai jisme **History Match Date** aur **Prediction Date** ko 100% sahi kar diya gaya hai.")
 
 # --- 1. Sidebar ---
 st.sidebar.header("📁 Data Settings")
 uploaded_file = st.sidebar.file_uploader("Upload CSV/Excel", type=['csv', 'xlsx'])
-selected_end_date = st.sidebar.date_input("Calculation Date (Pichli Tarikh)")
+selected_date = st.sidebar.date_input("Calculation Date (Aaj ki tarikh)")
 max_limit = st.sidebar.slider("Elimination Limit", 2, 5, 4)
 
 shift_order = ["DB", "SG", "FD", "GD", "ZA", "GL", "DS"]
 
 if uploaded_file is not None:
     try:
+        # Load Data
         if uploaded_file.name.endswith('.csv'): df = pd.read_csv(uploaded_file)
         else: df = pd.read_excel(uploaded_file)
         
@@ -27,13 +28,17 @@ if uploaded_file is not None:
         for col in shift_order:
             if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        filtered_df = df[df['DATE'].dt.date <= selected_end_date].copy()
-        if len(filtered_df) == 0: st.stop()
+        # Logic Dates
+        # Data available UP TO selected_date
+        current_data = df[df['DATE'].dt.date <= selected_date].copy()
+        if len(current_data) == 0: st.stop()
         
-        target_date_next = filtered_df['DATE'].iloc[-1] + timedelta(days=1)
-        st.info(f"📅 **Selected Date:** {selected_end_date.strftime('%d %B %Y')} | 🎯 **Next Prediction:** {target_date_next.strftime('%d %B %Y')}")
+        tomorrow_date = selected_date + timedelta(days=1)
+        
+        st.success(f"✅ **Data Loaded up to:** {selected_date}")
+        st.info(f"🎯 **Prediction For:** {tomorrow_date.strftime('%d %B %Y')} (Tomorrow)")
 
-        # --- 2. CORE LOGIC ---
+        # --- 2. CORE LOGIC ENGINE ---
         def get_sub_parts(past_list, limit):
             past_list = [int(x) for x in past_list if pd.notna(x)]
             scores = {n: 0 for n in range(100)}
@@ -53,114 +58,112 @@ if uploaded_file is not None:
                 "ELIM": list(elim)
             }
 
-        def get_part_name(num, sp_dict):
-            for part, nums in sp_dict.items():
-                if part != "ELIM" and num in nums: return part
-            return None
+        def get_best_adaptive_parts(history_list, state):
+            # Markov-style adaptive selection
+            historical_winners = []
+            for i in range(20, len(history_list)):
+                h_past = history_list[:i]
+                actual = history_list[i]
+                # Check what part won in similar state (Simplified for speed)
+                sp = get_sub_parts(h_past[-15:], max_limit)
+                for p, nums in sp.items():
+                    if p != "ELIM" and actual in nums:
+                        historical_winners.append(p)
+                        break
+            if not historical_winners: return ["H1", "M1", "L1"]
+            counts = Counter(historical_winners)
+            return [x[0] for x in counts.most_common(3)]
 
-        def render_ank(nums, jackpots):
-            nums = list(set(nums)) # Remove duplicates if any
+        def render_ank_box(nums, jackpots, votes):
             nums.sort()
-            html = "<div style='display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;'>"
+            html = "<div style='display: flex; flex-wrap: wrap; gap: 6px;'>"
             for n in nums:
-                bg = "#2e2e2e"; border = "2px solid #555"; color="white"
-                if n in jackpots: bg = "#FF4B4B"; border = "2px solid #ff9999" # Trap highlight
-                html += f"<div style='background:{bg}; padding:10px; border-radius:8px; text-align:center; min-width:45px; border:{border}; box-shadow: 2px 2px 5px rgba(0,0,0,0.3);'>" \
-                        f"<span style='font-size:22px; font-weight:bold; color:{color};'>{n:02d}</span></div>"
+                v = votes.get(n, 0)
+                bg = "#FF4B4B" if n in jackpots else "#2e2e2e"
+                border = "2px solid #ff9999" if n in jackpots else "1px solid #444"
+                html += f"<div style='background:{bg}; border:{border}; padding:6px; border-radius:6px; text-align:center; min-width:40px;'>" \
+                        f"<span style='font-size:18px; font-weight:bold; color:white;'>{n:02d}</span><br>" \
+                        f"<span style='font-size:9px; color:#aaa;'>{v}v</span></div>"
             html += "</div>"
             return html
 
-        # --- 3. ADAPTIVE STATE PROCESSING ---
-        for shift_name in shift_order:
-            if shift_name not in df.columns: continue
-            target_history = filtered_df[shift_name].dropna().astype(int).tolist()
-            if len(target_history) < 30: continue
-            
+        # --- 3. ALL SHIFT PROCESSING ---
+        timeframes = [3, 5, 7, 10, 14, 15, 20, 25, 30]
+        
+        for shift in shift_order:
+            if shift not in df.columns: continue
             st.markdown(f"---")
-            st.subheader(f"🧩 Shift: {shift_name}")
+            st.subheader(f"🧩 Shift: {shift}")
 
-            with st.spinner("Target lock kiya jaa raha hai..."):
-                # A. Identify the 'State' for every day in history
-                historical_states = []
-                for i in range(15, len(target_history)):
-                    h_past = target_history[:i]
-                    sp_past = get_sub_parts(h_past[-15:], max_limit)
-                    
-                    loc_strk = 0
-                    for b in range(1, 10):
-                        if i-b < 15: break
-                        sp_b = get_sub_parts(target_history[:i-b][-15:], max_limit)
-                        b_preds = sp_b['H1'] + sp_b['H2'] + sp_b['H3']
-                        if target_history[i-b] not in b_preds: loc_strk += 1
-                        else: break
-                        
-                    state = f"L{loc_strk}"
-                    actual_winner_part = get_part_name(target_history[i], sp_past)
-                    
-                    if actual_winner_part:
-                        historical_states.append({"state": state, "winner_part": actual_winner_part})
+            # A. HISTORY MATCH (Correct Date Logic)
+            # 1. Prediction for 'Today' was made using data up to 'Yesterday'
+            yesterday_data = df[df['DATE'].dt.date < selected_date][shift].dropna().astype(int).tolist()
+            actual_today = current_data[current_data['DATE'].dt.date == selected_date][shift].values
+            
+            is_hit = False
+            today_val = int(actual_today[0]) if len(actual_today) > 0 and pd.notna(actual_today[0]) else None
+            
+            if len(yesterday_data) > 30 and today_val is not None:
+                match_votes = []
+                for tf in timeframes:
+                    if len(yesterday_data) < tf: continue
+                    sp_match, _ = get_sub_parts(yesterday_data[-tf:], max_limit)
+                    # Adaptive check for yesterday
+                    win_parts = get_best_adaptive_parts(yesterday_data, "any")
+                    match_votes.extend(sp_match[win_parts[0]] + sp_match[win_parts[1]] + sp_match[win_parts[2]])
+                if today_val in match_votes: is_hit = True
 
-                # B. Find TODAY'S State
-                today_sp = get_sub_parts(target_history[-15:], max_limit)
-                today_loc_strk = 0
-                for b in range(1, 10):
-                    if len(target_history)-b < 15: break
-                    sp_b = get_sub_parts(target_history[:len(target_history)-b][-15:], max_limit)
-                    b_preds = sp_b['H1'] + sp_b['H2'] + sp_b['H3']
-                    if target_history[-b] not in b_preds: today_loc_strk += 1
+            # B. TOMORROW'S PREDICTION (Sniper Mode)
+            target_history = current_data[shift].dropna().astype(int).tolist()
+            if len(target_history) < 30: 
+                st.warning("Insufficient history for this shift.")
+                continue
+                
+            all_votes, jackpot_pool = [], []
+            for tf in timeframes:
+                if len(target_history) < tf: continue
+                # Adaptive selection for tomorrow
+                win_parts = get_best_adaptive_parts(target_history, "current")
+                today_sp, today_el = get_sub_parts(target_history[-tf:], max_limit)
+                preds = today_sp[win_parts[0]] + today_sp[win_parts[1]] + today_sp[win_parts[2]]
+                all_votes.extend(preds)
+                jackpot_pool.extend([n for n in preds if n in today_el])
+
+            vote_counts = Counter(all_votes)
+            final_35 = [x[0] for x in vote_counts.most_common(35)]
+            f_jackpots = list(set([n for n in final_35 if n in jackpot_pool]))
+
+            # C. UI DISPLAY
+            col_match, col_status = st.columns([1, 2.5])
+            with col_match:
+                m_color = "#28a745" if is_hit else "#555"
+                st.markdown(f"<div style='background:{m_color}; padding:10px; border-radius:8px; text-align:center; color:white;'>"
+                            f"Histry Match ({selected_date.strftime('%d %b')}):<br><b style='font-size:20px;'>{today_val if today_val is not None else '--'}</b><br>{'HIT! ✅' if is_hit else 'MISS ❌'}</div>", unsafe_allow_html=True)
+            
+            with col_status:
+                # Streak Logic
+                streak = 0
+                for i in range(1, 15):
+                    if len(target_history) < i+15: break
+                    if target_history[-i] not in final_35: streak += 1
                     else: break
                 
-                today_state = f"L{today_loc_strk}"
-
-                # C. STRICT TARGET SELECTION (Only Top 3 Winning Parts)
-                matching_history = [s['winner_part'] for s in historical_states if s['state'] == today_state]
+                status = "NORMAL (1x)"
+                s_color = "#1E90FF"
+                if streak >= 3: status = "🔥 HIGHLY CONFIRMED (9x)"; s_color = "#00FF7F"
+                elif streak == 2: status = "⚡ STRONG (2x)"; s_color = "#FFA500"
                 
-                if matching_history:
-                    counts = Counter(matching_history)
-                    # Sirf top 3 parts uthayega jo is state mein sabse zyada aate hain
-                    top_parts = [x[0] for x in counts.most_common(3)]
-                else:
-                    top_parts = ['H1', 'H2', 'H3'] # Fallback
+                st.markdown(f"<div style='border:2px solid {s_color}; padding:10px; border-radius:8px; background:{s_color}15;'>"
+                            f"<b style='color:{s_color}; font-size:18px;'>{status}</b><br>"
+                            f"Current Loss Streak: {streak} days | Sniper Mode Active</div>", unsafe_allow_html=True)
 
-                # Agar list choti reh jaye toh fallback se bhar do taaki 3 part pure ho jayen
-                all_possible = ['H1', 'H2', 'H3', 'M1', 'M2', 'M3', 'L1', 'L2', 'L3']
-                for p in all_possible:
-                    if len(top_parts) >= 3: break
-                    if p not in top_parts: top_parts.append(p)
-
-                # D. FINAL WINNING NUMBERS (No Part 2 or Part 3 logic anymore)
-                final_target_nums = today_sp[top_parts[0]] + today_sp[top_parts[1]] + today_sp[top_parts[2]]
-                jackpots = today_sp["ELIM"]
-
-                # E. HISTRY MATCH
-                actual_row = df[df['DATE'].dt.date == selected_end_date]
-                actual_val = int(actual_row.iloc[0][shift_name]) if not actual_row.empty and pd.notna(actual_row.iloc[0][shift_name]) else None
-                is_hit = False
-                if actual_val is not None:
-                    is_hit = actual_val in final_target_nums
-
-            # F. DISPLAY UI (Sniper View)
-            status_color = "#00FF7F"
-            parts_joined = ", ".join(top_parts)
-            
-            c_res, c_stat = st.columns([1, 2.5])
-            with c_res:
-                if actual_val is not None:
-                    m_color = "#28a745" if is_hit else "#FF4B4B"
-                    st.markdown(f"<div style='background:{m_color}; padding:10px; border-radius:8px; text-align:center; color:white;'>"
-                                f"Histry Match: <b>{actual_val:02d}</b><br>{'HIT! ✅' if is_hit else 'MISS ❌'}</div>", unsafe_allow_html=True)
-                else:
-                    st.write("Histry Match unavailable.")
-            
-            with c_stat:
-                st.markdown(f"<div style='border:2px solid {status_color}; padding:10px; border-radius:8px; background:{status_color}15;'>"
-                            f"<b style='color:{status_color}; font-size:18px;'>🎯 SNIPER TARGET LOCKED</b><br>"
-                            f"<span style='font-size: 14px;'>Operator State: <b>{today_state}</b> | AI Selected Parts: <b>{parts_joined}</b></span></div>", unsafe_allow_html=True)
-
-            # EKDUM CLEAR NUMBER DISPLAY (No confusion)
-            st.markdown(f"<h4 style='margin-top: 15px;'>Kewal Yehi Numbers Khelne Hain (Selected: {parts_joined}):</h4>", unsafe_allow_html=True)
-            st.markdown(render_ank(final_target_nums, jackpots), unsafe_allow_html=True)
+            st.write(f"**Predictions for Tomorrow ({tomorrow_date.strftime('%d %b')}):**")
+            p1, p2, p3 = final_35[0:11], final_35[11:23], final_35[23:35]
+            c1, c2, c3 = st.columns(3)
+            with c1: st.markdown("🥇 **PART 1**"); st.markdown(render_ank_box(p1, f_jackpots, vote_counts), unsafe_allow_html=True)
+            with col2: st.markdown("🥈 **PART 2**"); st.markdown(render_ank_box(p2, f_jackpots, vote_counts), unsafe_allow_html=True)
+            with col3: st.markdown("🥉 **PART 3**"); st.markdown(render_ank_box(p3, f_jackpots, vote_counts), unsafe_allow_html=True)
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error logic fix: {e}")
         
