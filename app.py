@@ -4,15 +4,15 @@ import numpy as np
 from datetime import timedelta
 from collections import Counter
 
-st.set_page_config(page_title="MAYA AI - Date Corrected Sniper Engine", layout="wide")
+st.set_page_config(page_title="MAYA AI - Exact Date Sniper", layout="wide")
 
-st.title("MAYA AI 🎯: Sniper Target Engine (100% Date Corrected)")
-st.markdown("Is engine mein **Date Match Logic** poori tarah theek kar diya gaya hai. Ab Histry Match usi din ki prediction aur result ko aapas mein match karega, aur kal ki prediction bilkul alag se nikalega.")
+st.title("MAYA AI 🎯: Exact Date Sniper Engine")
+st.markdown("Ab Histry Match bilkul perfect hai! Aap jo tarikh select karenge, AI uske **agle din** ki prediction karega aur Excel mein check karega ki us agle din kya asli result aaya tha (Hit/Miss).")
 
 # --- 1. Sidebar ---
 st.sidebar.header("📁 Data Settings")
 uploaded_file = st.sidebar.file_uploader("Upload CSV/Excel", type=['csv', 'xlsx'])
-selected_end_date = st.sidebar.date_input("Calculation Date (Aaj ki Tarikh)")
+selected_end_date = st.sidebar.date_input("Calculation Date (Training Tak Ki Tarikh)")
 max_limit = st.sidebar.slider("Elimination Limit", 2, 5, 4)
 
 shift_order = ["DB", "SG", "FD", "GD", "ZA", "GL", "DS"]
@@ -27,12 +27,14 @@ if uploaded_file is not None:
         for col in shift_order:
             if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
 
-        # Current Data up to selected date
+        # Data sirf selected_end_date tak padhna hai (e.g., 25 tarikh)
         filtered_df = df[df['DATE'].dt.date <= selected_end_date].copy()
-        if len(filtered_df) == 0: st.stop()
+        if len(filtered_df) == 0: 
+            st.warning("Is tarikh tak data nahi hai.")
+            st.stop()
         
-        target_date_next = selected_end_date + timedelta(days=1)
-        st.info(f"📅 **Selected Date (Histry Match):** {selected_end_date.strftime('%d %B %Y')} | 🎯 **Next Prediction:** {target_date_next.strftime('%d %B %Y')}")
+        target_date_next = selected_end_date + timedelta(days=1) # e.g., 26 tarikh
+        st.info(f"📅 **Data Read Up To:** {selected_end_date.strftime('%d %B %Y')} | 🎯 **Prediction & Match For:** {target_date_next.strftime('%d %B %Y')}")
 
         # --- 2. CORE LOGIC ---
         def get_sub_parts(past_list, limit):
@@ -71,7 +73,6 @@ if uploaded_file is not None:
             html += "</div>"
             return html
 
-        # MASTER PREDICTION FUNCTION (Ek hi logic ko alag-alag dates ke liye use karne ke liye)
         def get_sniper_prediction(history_series):
             historical_states = []
             for i in range(15, len(history_series)):
@@ -91,7 +92,7 @@ if uploaded_file is not None:
                 if actual_winner_part:
                     historical_states.append({"state": state, "winner_part": actual_winner_part})
 
-            # Find STATE at the end of the provided history series
+            # Find STATE for today (to predict tomorrow)
             current_sp = get_sub_parts(history_series[-15:], max_limit)
             cur_loc_strk = 0
             for b in range(1, 10):
@@ -121,35 +122,29 @@ if uploaded_file is not None:
 
             return target_nums, jackpots, top_parts, current_state
 
-        # --- 3. SHIFT PROCESSING WITH CORRECT DATES ---
+        # --- 3. SHIFT PROCESSING ---
         for shift_name in shift_order:
             if shift_name not in df.columns: continue
             
-            # Data UP TO Selected Date (For Tomorrow's prediction)
-            history_today = filtered_df[shift_name].dropna().astype(int).tolist()
-            # Data STRICTLY BEFORE Selected Date (For Histry Match prediction)
-            history_yesterday = df[df['DATE'].dt.date < selected_end_date][shift_name].dropna().astype(int).tolist()
-            
-            if len(history_today) < 30: continue
+            # History up to Selected Date (e.g., 25 tarikh tak)
+            history_for_prediction = filtered_df[shift_name].dropna().astype(int).tolist()
+            if len(history_for_prediction) < 30: continue
             
             st.markdown(f"---")
             st.subheader(f"🧩 Shift: {shift_name}")
 
             with st.spinner("Date match and target lock kiya jaa raha hai..."):
                 
-                # A. HISTRY MATCH (Correct Logic)
-                # Hum 24 tarikh ka data dekar 25 tarikh ke target numbers nikal rahe hain
-                actual_row = df[df['DATE'].dt.date == selected_end_date]
-                actual_val = int(actual_row.iloc[0][shift_name]) if not actual_row.empty and pd.notna(actual_row.iloc[0][shift_name]) else None
+                # A. GET PREDICTION FOR NEXT DATE (e.g., 26 tarikh ke liye)
+                final_target_nums, jackpots, top_parts, current_state = get_sniper_prediction(history_for_prediction)
+                
+                # B. HISTRY MATCH (Checking actual result of 26 tarikh in Excel)
+                actual_row_next = df[df['DATE'].dt.date == target_date_next]
+                actual_val_next = int(actual_row_next.iloc[0][shift_name]) if not actual_row_next.empty and pd.notna(actual_row_next.iloc[0][shift_name]) else None
                 
                 is_hit = False
-                if actual_val is not None and len(history_yesterday) >= 30:
-                    hist_target_nums, _, _, _ = get_sniper_prediction(history_yesterday)
-                    is_hit = actual_val in hist_target_nums
-
-                # B. TOMORROW'S PREDICTION
-                # Hum 25 tarikh tak ka data dekar 26 tarikh ke target numbers nikal rahe hain
-                final_target_nums, jackpots, top_parts, today_state = get_sniper_prediction(history_today)
+                if actual_val_next is not None:
+                    is_hit = actual_val_next in final_target_nums
 
             # C. DISPLAY UI
             status_color = "#00FF7F"
@@ -157,22 +152,23 @@ if uploaded_file is not None:
             
             c_res, c_stat = st.columns([1, 2.5])
             with c_res:
-                if actual_val is not None:
+                if actual_val_next is not None:
                     m_color = "#28a745" if is_hit else "#FF4B4B"
                     st.markdown(f"<div style='background:{m_color}; padding:10px; border-radius:8px; text-align:center; color:white;'>"
-                                f"Histry Match ({selected_end_date.strftime('%d %b')}):<br><b style='font-size:24px;'>{actual_val:02d}</b><br>{'HIT! ✅' if is_hit else 'MISS ❌'}</div>", unsafe_allow_html=True)
+                                f"Match Result ({target_date_next.strftime('%d %b')}):<br><b style='font-size:24px;'>{actual_val_next:02d}</b><br>{'HIT! ✅' if is_hit else 'MISS ❌'}</div>", unsafe_allow_html=True)
                 else:
-                    st.write("Histry Match unavailable.")
+                    st.markdown(f"<div style='background:#555; padding:10px; border-radius:8px; text-align:center; color:white;'>"
+                                f"Data for {target_date_next.strftime('%d %b')}<br>Abhi nahi aaya hai</div>", unsafe_allow_html=True)
             
             with c_stat:
                 st.markdown(f"<div style='border:2px solid {status_color}; padding:10px; border-radius:8px; background:{status_color}15;'>"
-                            f"<b style='color:{status_color}; font-size:18px;'>🎯 SNIPER TARGET LOCKED FOR TOMORROW</b><br>"
-                            f"<span style='font-size: 14px;'>Operator State: <b>{today_state}</b> | AI Selected Parts: <b>{parts_joined}</b></span></div>", unsafe_allow_html=True)
+                            f"<b style='color:{status_color}; font-size:18px;'>🎯 SNIPER TARGET LOCKED FOR {target_date_next.strftime('%d %b')}</b><br>"
+                            f"<span style='font-size: 14px;'>Operator State: <b>{current_state}</b> | AI Selected Parts: <b>{parts_joined}</b></span></div>", unsafe_allow_html=True)
 
             # CLEAR NUMBER DISPLAY
-            st.markdown(f"<h4 style='margin-top: 15px;'>Kewal Yehi Numbers Khelne Hain ({target_date_next.strftime('%d %b')} ke liye):</h4>", unsafe_allow_html=True)
+            st.markdown(f"<h4 style='margin-top: 15px;'>Kewal Yehi Numbers Khelne Hain:</h4>", unsafe_allow_html=True)
             st.markdown(render_ank(final_target_nums, jackpots), unsafe_allow_html=True)
 
     except Exception as e:
         st.error(f"Error: {e}")
-        
+                        
